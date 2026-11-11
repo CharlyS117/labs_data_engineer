@@ -1,0 +1,30 @@
+version: 2
+sources:
+  - name: public
+    tables:
+      - name: raw_orders
+      - name: raw_customers
+  - name: mobility_raw
+    schema: public
+    tables:
+      - name: raw_station_status
+
+models:
+  - name: stg_orders
+    columns:
+      - name: order_id
+        tests:
+          - unique
+          - not_null
+  - name: stg_station_status
+    description: "Capa staging de calculo de ocupacion y estandarizacion"
+    columns:
+      - name: station_id
+        tests:
+          - not_null
+      - name: occupancy_rate
+        tests:
+          - not_null
+
+  - name: fct_station_kpis
+    description: "Metricas consolidadas de disponibilidad y alertas operativas"

@@ -1,0 +1,66 @@
+services:
+  # 1. Mock de AWS (LocalStack Community)
+  localstack:
+    image: localstack/localstack:3.0.0
+    container_name: localstack_s3
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - localstack_data:/var/lib/localstack
+
+  # 2. Base de datos para Airflow
+  postgres:
+    image: postgres:15
+    container_name: airflow_postgres
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U airflow -d airflow" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 3. Apache Airflow
+  airflow-webserver:
+    image: apache/airflow:2.9.0-python3.11
+    container_name: airflow_webserver
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_started
+    environment:
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - DBT_ALLOW_EXPERIMENTAL_ADAPTERS=true
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./dbt_project:/opt/airflow/dbt_project
+    ports:
+      - "8888:8080"
+    command: >
+      bash -c "
+        pip install --no-cache-dir dbt-postgres==1.8.2 &&
+        airflow db migrate &&
+        airflow users create --username admin --password admin --firstname Admin --lastname Admin --role Admin --email admin@example.com || true &&
+        python3 -c 'from airflow import settings; from airflow.models import Connection; import json; conn = Connection(conn_id=\"aws_default\", conn_type=\"aws\", extra=json.dumps({\"endpoint_url\": \"http://localstack:4566\", \"aws_access_key_id\": \"test\", \"aws_secret_access_key\": \"test\", \"region_name\": \"us-east-1\"})); s = settings.Session(); s.merge(conn); s.commit()' || true &&
+        airflow webserver &
+        airflow scheduler
+      "
+
+volumes:
+  localstack_data:
+  postgres_data:

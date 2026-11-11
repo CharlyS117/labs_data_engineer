@@ -1,0 +1,18 @@
+# Logs & Entornos virtuales
+logs/
+*.log
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+
+# dbt artifacts y dependencias
+dbt_project/dbt_packages/
+dbt_project/logs/
+dbt_project/target/
+
+# Archivos de SO e IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
