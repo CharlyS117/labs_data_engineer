@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 import csv
 import io
@@ -6,34 +7,46 @@ import psycopg2
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
+S3_ENDPOINT = os.getenv("AWS_ENDPOINT_URL", "http://localstack:4566")
+S3_BUCKET = os.getenv("S3_BUCKET_NAME", "raw-data")
+AWS_KEY = os.getenv("AWS_ACCESS_KEY_ID", "test")
+AWS_SECRET = os.getenv("AWS_SECRET_ACCESS_KEY", "test")
+AWS_REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+
+PG_USER = os.getenv("POSTGRES_USER", "airflow")
+PG_PASS = os.getenv("POSTGRES_PASSWORD", "airflow")
+PG_HOST = os.getenv("POSTGRES_HOST", "postgres")
+PG_PORT = os.getenv("POSTGRES_PORT", "5432")
+PG_DB = os.getenv("POSTGRES_DB", "airflow")
+
 def extract_from_s3_and_load_to_postgres():
-    # 1. Conexión a LocalStack S3
     s3 = boto3.client(
         "s3",
-        endpoint_url="http://localstack:4566",
-        aws_access_key_id="test",
-        aws_secret_access_key="test",
-        region_name="us-east-1",
+        endpoint_url=S3_ENDPOINT,
+        aws_access_key_id=AWS_KEY,
+        aws_secret_access_key=AWS_SECRET,
+        region_name=AWS_REGION,
     )
     
-    bucket_name = "raw-data"
     object_key = "ventas/fecha=2026-11-08/datos.csv"
-    
-    print(f"Descargando archivo {object_key} desde el bucket {bucket_name}...")
-    response = s3.get_object(Bucket=bucket_name, Key=object_key)
+    print(f"Descargando archivo {object_key} desde el bucket {S3_BUCKET}...")
+    response = s3.get_object(Bucket=S3_BUCKET, Key=object_key)
     csv_content = response["Body"].read().decode("utf-8")
     
-    # 2. Parsear CSV en memoria
     csv_file = io.StringIO(csv_content)
     reader = csv.DictReader(csv_file)
     rows_to_insert = [(int(row["id"]), row["producto"], float(row["precio"])) for row in reader]
     print(f"Registros leídos: {len(rows_to_insert)}")
     
-    # 3. Cargar datos en PostgreSQL
-    conn = psycopg2.connect("postgresql://airflow:airflow@postgres:5432/airflow")
+    conn = psycopg2.connect(
+        host=PG_HOST,
+        port=PG_PORT,
+        user=PG_USER,
+        password=PG_PASS,
+        database=PG_DB
+    )
     cur = conn.cursor()
     
-    # Crear tabla de destino si no existe
     cur.execute("""
         CREATE TABLE IF NOT EXISTS public.raw_ventas (
             id INT PRIMARY KEY,
@@ -43,7 +56,6 @@ def extract_from_s3_and_load_to_postgres():
         );
     """)
     
-    # Insertar o actualizar (UPSERT)
     insert_query = """
         INSERT INTO public.raw_ventas (id, producto, precio)
         VALUES (%s, %s, %s)
@@ -70,4 +82,3 @@ with DAG(
         task_id="cargar_s3_hacia_postgres",
         python_callable=extract_from_s3_and_load_to_postgres,
     )
-

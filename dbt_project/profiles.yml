@@ -3,10 +3,10 @@ ecommerce_lab:
   outputs:
     dev:
       type: postgres
-      host: postgres
-      user: airflow
-      password: airflow
-      port: 5432
-      dbname: airflow
-      schema: analytics
+      host: "{{ env_var('POSTGRES_HOST', 'postgres') }}"
+      user: "{{ env_var('POSTGRES_USER', 'airflow') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD', 'airflow') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | as_number }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'airflow') }}"
+      schema: "{{ env_var('DBT_SCHEMA', 'analytics') }}"
       threads: 2

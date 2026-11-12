@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 import json
 import requests
@@ -9,9 +10,29 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 
-S3_ENDPOINT = "http://localstack:4566"
-S3_BUCKET = "raw-data"
+# Parámetros desde variables de entorno
+S3_ENDPOINT = os.getenv("AWS_ENDPOINT_URL", "http://localstack:4566")
+S3_BUCKET = os.getenv("S3_BUCKET_NAME", "raw-data")
+AWS_KEY = os.getenv("AWS_ACCESS_KEY_ID", "test")
+AWS_SECRET = os.getenv("AWS_SECRET_ACCESS_KEY", "test")
+AWS_REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+
+PG_USER = os.getenv("POSTGRES_USER", "airflow")
+PG_PASS = os.getenv("POSTGRES_PASSWORD", "airflow")
+PG_HOST = os.getenv("POSTGRES_HOST", "postgres")
+PG_PORT = os.getenv("POSTGRES_PORT", "5432")
+PG_DB = os.getenv("POSTGRES_DB", "airflow")
+
 GBFS_STATUS_URL = "https://gbfs.mex.lyftbikes.com/gbfs/es/station_status.json"
+
+def get_s3_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=S3_ENDPOINT,
+        aws_access_key_id=AWS_KEY,
+        aws_secret_access_key=AWS_SECRET,
+        region_name=AWS_REGION
+    )
 
 def extract_gbfs_to_s3(**context):
     response = requests.get(GBFS_STATUS_URL, timeout=30)
@@ -19,14 +40,7 @@ def extract_gbfs_to_s3(**context):
     payload = response.json()
     
     stations_data = payload.get("data", {}).get("stations", [])
-
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=S3_ENDPOINT,
-        aws_access_key_id="test",
-        aws_secret_access_key="test",
-        region_name="us-east-1"
-    )
+    s3 = get_s3_client()
 
     # Crear bucket si no existe
     buckets = [b["Name"] for b in s3.list_buckets().get("Buckets", [])]
@@ -46,14 +60,7 @@ def load_s3_to_postgres(**context):
     ti = context['task_instance']
     key = ti.xcom_pull(task_ids="extract_gbfs_to_s3", key="s3_file_key")
     
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=S3_ENDPOINT,
-        aws_access_key_id="test",
-        aws_secret_access_key="test",
-        region_name="us-east-1"
-    )
-    
+    s3 = get_s3_client()
     obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
     records = json.loads(obj["Body"].read().decode("utf-8"))
 
@@ -69,7 +76,7 @@ def load_s3_to_postgres(**context):
     ]
     df_filtered = df[[c for c in cols_to_keep if c in df.columns]]
 
-    engine = create_engine("postgresql+psycopg2://airflow:airflow@postgres:5432/airflow")
+    engine = create_engine(f"postgresql+psycopg2://{PG_USER}:{PG_PASS}@{PG_HOST}:{PG_PORT}/{PG_DB}")
     with engine.begin() as conn:
         conn.exec_driver_sql("CREATE TABLE IF NOT EXISTS public.raw_station_status (station_id TEXT, num_bikes_available BIGINT, num_docks_available BIGINT, is_installed BIGINT, is_renting BIGINT, is_returning BIGINT, last_reported BIGINT, extracted_at TIMESTAMP);")
         conn.exec_driver_sql("TRUNCATE TABLE public.raw_station_status;")
