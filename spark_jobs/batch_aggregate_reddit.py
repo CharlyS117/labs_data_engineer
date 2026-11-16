@@ -1,9 +1,10 @@
 import os
+import hashlib
 from pyspark.sql import SparkSession
 from pyspark.sql.window import Window
 from pyspark.sql.functions import (
     col, row_number, count, avg, sum, round as spark_round,
-    lower, coalesce, length, trim, lit
+    lower, coalesce, length, trim, lit, md5, substring
 )
 from delta.tables import DeltaTable
 
@@ -46,10 +47,10 @@ def main():
         raw_delta_df = raw_delta_df.withColumn("is_self", lit(True))
 
     # 1. Deduplicar por 'id' conservando la versión más reciente según 'ingested_at'
-    window_spec = Window.partitionBy("id").orderBy(col("ingested_at").desc())
-    dedup_df = (
+    window_id = Window.partitionBy("id").orderBy(col("ingested_at").desc())
+    dedup_id_df = (
         raw_delta_df
-        .withColumn("row_num", row_number().over(window_spec))
+        .withColumn("row_num", row_number().over(window_id))
         .filter(col("row_num") == 1)
         .drop("row_num")
     )
@@ -57,7 +58,7 @@ def main():
     # 2. Calcular agregaciones de KPIs por subreddit e ingestion_date
     print("Calculando KPIs por subreddit e ingestion_date...")
     kpi_df = (
-        dedup_df
+        dedup_id_df
         .groupBy("subreddit", "ingestion_date")
         .agg(
             count("id").alias("total_unique_posts"),
@@ -71,8 +72,8 @@ def main():
     print("Resumen de KPIs generados:")
     kpi_df.show(truncate=False)
 
-    # 3. Filtrar y Curar Publicaciones y Artículos Extensos (public.reddit_articles)
-    print("Filtrando y curando publicaciones de texto completo...")
+    # 3. Filtrar y Curar Publicaciones / Artículos Extensos (public.reddit_articles)
+    print("Filtrando y deduplicando publicaciones por contenido global...")
     flair_clean = lower(coalesce(col("link_flair_text"), lit("")))
     selftext_clean = trim(coalesce(col("selftext"), lit("")))
     selftext_len = length(selftext_clean)
@@ -88,7 +89,7 @@ def main():
         ~flair_clean.contains("discord")
     )
 
-    # Regla 3: Artículos técnicos, discusiones, tutoriales o publicaciones de texto explicativo
+    # Regla 3: Artículos técnicos, relatos o publicaciones explicativas sustanciales
     rule_is_article = (
         flair_clean.contains("article") |
         flair_clean.contains("tutorial") |
@@ -96,15 +97,36 @@ def main():
         flair_clean.contains("discussion") |
         flair_clean.contains("optimization") |
         flair_clean.contains("best practices") |
+        flair_clean.contains("relato") |
+        flair_clean.contains("historia") |
+        flair_clean.contains("experiencia") |
+        flair_clean.contains("confesion") |
+        flair_clean.contains("confesión") |
+        flair_clean.contains("anecdota") |
+        flair_clean.contains("anécdota") |
         (
             (col("is_self") == True) &
-            (selftext_len >= 300)
+            (selftext_len >= 250)
         )
     )
 
+    filtered_df = dedup_id_df.filter(rule_has_body & rule_not_spam & rule_is_article)
+
+    # DEDUPLICACIÓN GLOBAL CROSS-SUBREDDIT:
+    # Si un mismo post o historia fue publicado en varios subreddits o múltiples veces,
+    # agrupamos por el hash de los primeros 120 caracteres de texto normalizado o título.
+    # Conservamos exactamente 1 único registro (el de mayor score o más reciente).
+    window_content = (
+        Window
+        .partitionBy(lower(trim(col("title"))), substring(selftext_clean, 1, 100))
+        .orderBy(col("score").desc(), col("event_timestamp").desc())
+    )
+
     articles_df = (
-        dedup_df
-        .filter(rule_has_body & rule_not_spam & rule_is_article)
+        filtered_df
+        .withColumn("content_row", row_number().over(window_content))
+        .filter(col("content_row") == 1)
+        .drop("content_row")
         .select(
             "id",
             "subreddit",
@@ -121,7 +143,7 @@ def main():
     )
 
     total_articles = articles_df.count()
-    print(f"Total de artículos técnicos curados y seleccionados: {total_articles}")
+    print(f"Total de artículos/publicaciones únicos curados y sin duplicados: {total_articles}")
 
     # 4. Escribir resultados en PostgreSQL mediante JDBC
     jdbc_url = f"jdbc:postgresql://{pg_host}:{pg_port}/{pg_db}"
@@ -135,9 +157,13 @@ def main():
     print(f"Guardando KPIs en PostgreSQL ({jdbc_url} -> public.reddit_subreddit_kpis)...")
     kpi_df.write.mode("overwrite").jdbc(url=jdbc_url, table="public.reddit_subreddit_kpis", properties=db_properties)
 
-    # Guardar Artículos
-    print(f"Guardando artículos curados en PostgreSQL ({jdbc_url} -> public.reddit_articles)...")
+    # Guardar Artículos (public.reddit_articles)
+    print(f"Guardando publicaciones únicas en PostgreSQL ({jdbc_url} -> public.reddit_articles)...")
     articles_df.write.mode("overwrite").jdbc(url=jdbc_url, table="public.reddit_articles", properties=db_properties)
+
+    # También actualizar public.reddit_relatos para retrocompatibilidad
+    print(f"Sincronizando tabla public.reddit_relatos con contenido deduplicado...")
+    articles_df.write.mode("overwrite").jdbc(url=jdbc_url, table="public.reddit_relatos", properties=db_properties)
     print("Guardado en PostgreSQL completado.")
 
     # 5. Limpieza (Vacuum)

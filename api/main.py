@@ -105,29 +105,22 @@ def get_metrics_summary() -> Dict[str, Any]:
             "data": []
         }
 
-@app.get("/api/articles", tags=["Articles"])
-def get_articles(
-    subreddit: Optional[str] = Query(None, description="Filtrar por subreddit (ej: dataengineering)"),
-    flair: Optional[str] = Query(None, description="Filtrar por etiqueta/flair"),
-    search: Optional[str] = Query(None, description="Búsqueda por texto en título o contenido"),
-    limit: int = Query(50, ge=1, le=100)
-) -> Dict[str, Any]:
-    """Obtiene los artículos técnicos curados con su texto completo desde PostgreSQL."""
+def _fetch_content(table_name: str, subreddit: Optional[str], flair: Optional[str], search: Optional[str], limit: int):
     try:
         with engine.connect() as conn:
             check_table = conn.execute(text(
-                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'reddit_articles');"
+                f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '{table_name}');"
             )).scalar()
 
             if not check_table:
                 return {
                     "status": "warning",
-                    "message": "La tabla public.reddit_articles aún no existe. Ejecuta el job batch de curación de Spark.",
+                    "message": f"La tabla public.{table_name} aún no existe. Ejecuta el job batch de curación de Spark.",
                     "count": 0,
                     "data": []
                 }
 
-            query = "SELECT id, subreddit, link_flair_text, title, selftext, author, score, num_comments, url, event_timestamp, ingestion_date FROM public.reddit_articles WHERE 1=1"
+            query = f"SELECT id, subreddit, link_flair_text, title, selftext, author, score, num_comments, url, event_timestamp, ingestion_date FROM public.{table_name} WHERE 1=1"
             params: Dict[str, Any] = {"limit": limit}
 
             if subreddit:
@@ -140,7 +133,7 @@ def get_articles(
                 query += " AND (title ILIKE :search OR selftext ILIKE :search)"
                 params["search"] = f"%{search}%"
 
-            query += " ORDER BY event_timestamp DESC LIMIT :limit"
+            query += " ORDER BY score DESC, event_timestamp DESC LIMIT :limit"
 
             result = conn.execute(text(query), params)
             rows = []
@@ -164,6 +157,26 @@ def get_articles(
             "count": 0,
             "data": []
         }
+
+@app.get("/api/articles", tags=["Articles"])
+def get_articles(
+    subreddit: Optional[str] = Query(None, description="Filtrar por subreddit"),
+    flair: Optional[str] = Query(None, description="Filtrar por etiqueta/flair"),
+    search: Optional[str] = Query(None, description="Búsqueda por texto en título o contenido"),
+    limit: int = Query(50, ge=1, le=100)
+) -> Dict[str, Any]:
+    """Obtiene los artículos/publicaciones únicos curados desde PostgreSQL."""
+    return _fetch_content("reddit_articles", subreddit, flair, search, limit)
+
+@app.get("/api/relatos", tags=["Relatos"])
+def get_relatos(
+    subreddit: Optional[str] = Query(None, description="Filtrar por subreddit"),
+    flair: Optional[str] = Query(None, description="Filtrar por etiqueta/flair"),
+    search: Optional[str] = Query(None, description="Búsqueda por texto en título o contenido"),
+    limit: int = Query(50, ge=1, le=100)
+) -> Dict[str, Any]:
+    """Obtiene los relatos/historias únicos curados desde PostgreSQL."""
+    return _fetch_content("reddit_relatos", subreddit, flair, search, limit)
 
 @app.get("/metrics/delta", tags=["Metrics"])
 def get_delta_lake_stats(limit: int = 20) -> Dict[str, Any]:
@@ -228,5 +241,5 @@ def get_delta_lake_stats(limit: int = 20) -> Dict[str, Any]:
 @app.get("/", response_class=HTMLResponse, tags=["Dashboard"])
 @app.get("/dashboard", response_class=HTMLResponse, tags=["Dashboard"])
 def get_dashboard(request: Request):
-    """Serve the real-time Observability and Articles Dashboard."""
+    """Serve the real-time Observability and Content Dashboard."""
     return templates.TemplateResponse("index.html", {"request": request})

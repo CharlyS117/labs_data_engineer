@@ -30,7 +30,7 @@
             </div>
             <div>
                 <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
-                    Reddit Data Lakehouse & Engineering Hub
+                    Reddit Data Lakehouse & Content Hub
                     <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">LIVE</span>
                 </h1>
                 <p class="text-xs text-slate-400">Kafka • PySpark Structured Streaming • Delta Lake • PostgreSQL DW • FastAPI</p>
@@ -85,7 +85,7 @@
 
             <div class="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 flex items-center justify-between">
                 <div>
-                    <span class="text-xs text-slate-400 font-medium uppercase tracking-wider">Publicaciones Curadas</span>
+                    <span class="text-xs text-slate-400 font-medium uppercase tracking-wider">Publicaciones Únicas</span>
                     <h3 id="articles-count" class="text-sm font-semibold mt-1 text-slate-300">--</h3>
                 </div>
                 <div class="p-2 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20">
@@ -133,8 +133,8 @@
                         <i data-lucide="book-open" class="w-5 h-5"></i>
                     </div>
                     <div>
-                        <h2 class="text-base font-bold text-slate-100">Publicaciones y Artículos Curados (Texto Completo)</h2>
-                        <p class="text-xs text-slate-400">Filtrados y clasificados por PySpark (longitud >= 200 caracteres, flairs analizados)</p>
+                        <h2 class="text-base font-bold text-slate-100">Publicaciones y Artículos Curados (Sin Duplicados)</h2>
+                        <p class="text-xs text-slate-400">Filtrados y deduplicados globalmente por PySpark (longitud >= 200 car., 1 registro único por contenido)</p>
                     </div>
                 </div>
 
@@ -168,9 +168,11 @@
     </footer>
 
     <script>
-        lucide.createIcons();
+        // Inicializar Lucide Icons
+        if (window.lucide) {
+            lucide.createIcons();
+        }
 
-        // Control de estado de acordeones abiertos para no cerrarlos nunca al actualizar
         const openCardIds = new Set();
         let isFetching = false;
 
@@ -185,6 +187,16 @@
         function handleFilterKey(e) {
             if (e.key === 'Enter') {
                 fetchArticles(true);
+            }
+        }
+
+        function setSpinning(spinning) {
+            const icon = document.getElementById('refresh-icon');
+            if (!icon) return;
+            if (spinning) {
+                icon.classList.add('animate-spin');
+            } else {
+                icon.classList.remove('animate-spin');
             }
         }
 
@@ -207,7 +219,6 @@
                 document.getElementById('articles-count').innerText = `${data.count || 0} publicaciones`;
 
                 if (data.status === 'success' && data.data && data.data.length > 0) {
-                    // Actualizar opciones del select dinámicamente si no están
                     const select = document.getElementById('filter-subreddit');
                     const existingSubs = new Set(Array.from(select.options).map(o => o.value));
                     const newSubs = Array.from(new Set(data.data.map(i => i.subreddit).filter(Boolean)));
@@ -220,7 +231,6 @@
                         }
                     });
 
-                    // Renderizar tarjetas respetando si el usuario las tenía abiertas
                     container.innerHTML = data.data.map(item => {
                         const dateFormatted = item.event_timestamp ? item.event_timestamp.substring(0, 19).replace('T', ' ') : 'Reciente';
                         const flairBadge = item.link_flair_text ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">${item.link_flair_text}</span>` : '';
@@ -261,7 +271,7 @@
                         </div>
                         `;
                     }).join('');
-                    lucide.createIcons();
+                    if (window.lucide) lucide.createIcons();
                 } else {
                     container.innerHTML = `
                     <div class="bg-slate-900/30 border border-slate-800/60 rounded-xl p-8 text-center text-slate-400 space-y-2">
@@ -270,7 +280,7 @@
                         <p class="text-xs text-slate-500">${data.message || 'Asegúrate de haber ejecutado el job batch de curación en Spark.'}</p>
                     </div>
                     `;
-                    lucide.createIcons();
+                    if (window.lucide) lucide.createIcons();
                 }
             } catch (err) {
                 console.error("Error al obtener artículos:", err);
@@ -280,9 +290,7 @@
         async function fetchAllData(includeArticles = true) {
             if (isFetching) return;
             isFetching = true;
-
-            const refreshIcon = document.getElementById('refresh-icon');
-            refreshIcon.classList.add('animate-spin');
+            setSpinning(true);
 
             try {
                 // 1. Health
@@ -336,7 +344,7 @@
             } catch (err) {
                 console.error('Error fetching dashboard data:', err);
             } finally {
-                refreshIcon.classList.remove('animate-spin');
+                setSpinning(false);
                 isFetching = false;
             }
         }
@@ -344,11 +352,10 @@
         // Carga inicial completa
         fetchAllData(true);
 
-        // Auto-refresh sólo si el usuario activó la casilla (por defecto desactivado para lectura cómoda)
+        // Auto-refresh opcional (desactivado por defecto)
         setInterval(() => {
             const autoRefresh = document.getElementById('toggle-autorefresh');
             if (autoRefresh && autoRefresh.checked) {
-                // Solo refresca KPIs y métricas del sistema, NO reescribe la lista de artículos para no interrumpir lectura
                 fetchAllData(false);
             }
         }, 30000);
