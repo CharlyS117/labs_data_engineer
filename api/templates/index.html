@@ -37,9 +37,15 @@
             </div>
         </div>
         <div class="flex items-center gap-4">
-            <button onclick="fetchAllData()" class="flex items-center gap-2 px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 border border-slate-700 transition">
+            <!-- Toggle de Auto-actualización -->
+            <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800">
+                <input type="checkbox" id="toggle-autorefresh" class="rounded bg-slate-800 border-slate-700 text-indigo-600 focus:ring-0">
+                <span>Auto-recarga KPIs (30s)</span>
+            </label>
+
+            <button onclick="manualRefresh()" id="btn-refresh" class="flex items-center gap-2 px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 border border-slate-700 transition">
                 <i data-lucide="refresh-cw" id="refresh-icon" class="w-3.5 h-3.5"></i>
-                Actualizar Todo
+                <span id="refresh-text">Actualizar Todo</span>
             </button>
             <a href="/docs" target="_blank" class="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 font-medium">
                 <span>Swagger API</span>
@@ -79,7 +85,7 @@
 
             <div class="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 flex items-center justify-between">
                 <div>
-                    <span class="text-xs text-slate-400 font-medium uppercase tracking-wider">Artículos Curados</span>
+                    <span class="text-xs text-slate-400 font-medium uppercase tracking-wider">Publicaciones Curadas</span>
                     <h3 id="articles-count" class="text-sm font-semibold mt-1 text-slate-300">--</h3>
                 </div>
                 <div class="p-2 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20">
@@ -119,7 +125,7 @@
             </div>
         </section>
 
-        <!-- SECTION: Artículos y Publicaciones Técnicas Curadas -->
+        <!-- SECTION: Publicaciones y Artículos Curados -->
         <section class="space-y-4">
             <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-slate-900/50 border border-slate-800/80 rounded-xl p-4">
                 <div class="flex items-center gap-3">
@@ -127,8 +133,8 @@
                         <i data-lucide="book-open" class="w-5 h-5"></i>
                     </div>
                     <div>
-                        <h2 class="text-base font-bold text-slate-100">Publicaciones y Artículos Técnicos Curados</h2>
-                        <p class="text-xs text-slate-400">Filtrados y procesados por PySpark (longitud >= 200 caracteres, flairs de tutorial, arquitectura o análisis)</p>
+                        <h2 class="text-base font-bold text-slate-100">Publicaciones y Artículos Curados (Texto Completo)</h2>
+                        <p class="text-xs text-slate-400">Filtrados y clasificados por PySpark (longitud >= 200 caracteres, flairs analizados)</p>
                     </div>
                 </div>
 
@@ -138,25 +144,20 @@
                         <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-2.5"></i>
                         <input type="text" id="filter-search" placeholder="Buscar palabras clave..." onkeyup="handleFilterKey(event)" class="w-full bg-slate-950/80 border border-slate-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500">
                     </div>
-                    <select id="filter-subreddit" onchange="fetchArticles()" class="bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                    <select id="filter-subreddit" onchange="fetchArticles(true)" class="bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
                         <option value="">Todos los subreddits</option>
-                        <option value="dataengineering">r/dataengineering</option>
-                        <option value="apachespark">r/apachespark</option>
-                        <option value="python">r/python</option>
-                        <option value="datascience">r/datascience</option>
-                        <option value="database">r/database</option>
                     </select>
-                    <button onclick="fetchArticles()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold rounded-lg text-white transition flex items-center gap-1.5">
+                    <button onclick="fetchArticles(true)" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold rounded-lg text-white transition flex items-center gap-1.5">
                         <i data-lucide="filter" class="w-3.5 h-3.5"></i>
                         Filtrar
                     </button>
                 </div>
             </div>
 
-            <!-- Contenedor de Tarjetas de Artículos -->
+            <!-- Contenedor de Tarjetas -->
             <div id="articles-container" class="space-y-4">
                 <div class="bg-slate-900/30 border border-slate-800/60 rounded-xl p-8 text-center text-slate-500 text-sm">
-                    Cargando artículos curados...
+                    Cargando artículos...
                 </div>
             </div>
         </section>
@@ -169,13 +170,29 @@
     <script>
         lucide.createIcons();
 
-        function handleFilterKey(e) {
-            if (e.key === 'Enter') {
-                fetchArticles();
+        // Control de estado de acordeones abiertos para no cerrarlos nunca al actualizar
+        const openCardIds = new Set();
+        let isFetching = false;
+
+        function recordCardToggle(cardId, isOpen) {
+            if (isOpen) {
+                openCardIds.add(cardId);
+            } else {
+                openCardIds.delete(cardId);
             }
         }
 
-        async function fetchArticles() {
+        function handleFilterKey(e) {
+            if (e.key === 'Enter') {
+                fetchArticles(true);
+            }
+        }
+
+        async function manualRefresh() {
+            await fetchAllData(true);
+        }
+
+        async function fetchArticles(forceRender = false) {
             const sub = document.getElementById('filter-subreddit').value;
             const search = document.getElementById('filter-search').value;
             const container = document.getElementById('articles-container');
@@ -187,13 +204,28 @@
             try {
                 const res = await fetch(url);
                 const data = await res.json();
-                document.getElementById('articles-count').innerText = `${data.count || 0} artículos`;
+                document.getElementById('articles-count').innerText = `${data.count || 0} publicaciones`;
 
                 if (data.status === 'success' && data.data && data.data.length > 0) {
+                    // Actualizar opciones del select dinámicamente si no están
+                    const select = document.getElementById('filter-subreddit');
+                    const existingSubs = new Set(Array.from(select.options).map(o => o.value));
+                    const newSubs = Array.from(new Set(data.data.map(i => i.subreddit).filter(Boolean)));
+                    newSubs.forEach(s => {
+                        if (!existingSubs.has(s)) {
+                            const opt = document.createElement('option');
+                            opt.value = s;
+                            opt.textContent = `r/${s}`;
+                            select.appendChild(opt);
+                        }
+                    });
+
+                    // Renderizar tarjetas respetando si el usuario las tenía abiertas
                     container.innerHTML = data.data.map(item => {
                         const dateFormatted = item.event_timestamp ? item.event_timestamp.substring(0, 19).replace('T', ' ') : 'Reciente';
                         const flairBadge = item.link_flair_text ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">${item.link_flair_text}</span>` : '';
-                        
+                        const wasOpen = openCardIds.has(item.id);
+
                         return `
                         <div class="bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 hover:border-slate-700/80 transition shadow-sm space-y-3">
                             <div class="flex flex-wrap items-center justify-between gap-2">
@@ -215,12 +247,12 @@
 
                             <h3 class="text-base font-bold text-white tracking-tight">${item.title}</h3>
 
-                            <details class="group bg-slate-950/60 border border-slate-800/60 rounded-lg p-3 cursor-pointer">
+                            <details ${wasOpen ? 'open' : ''} ontoggle="recordCardToggle('${item.id}', this.open)" class="group bg-slate-950/60 border border-slate-800/60 rounded-lg p-3 cursor-pointer">
                                 <summary class="flex items-center justify-between text-xs font-semibold text-indigo-400 hover:text-indigo-300 select-none">
                                     <span class="flex items-center gap-1.5">
                                         <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
-                                        <span class="group-open:hidden">Leer artículo completo (${(item.selftext || '').length} caracteres)...</span>
-                                        <span class="hidden group-open:inline">Ocultar artículo</span>
+                                        <span class="group-open:hidden">Leer contenido completo (${(item.selftext || '').length} caracteres)...</span>
+                                        <span class="hidden group-open:inline">Ocultar contenido</span>
                                     </span>
                                     <i data-lucide="chevron-down" class="w-4 h-4 transition-transform group-open:rotate-180"></i>
                                 </summary>
@@ -234,7 +266,7 @@
                     container.innerHTML = `
                     <div class="bg-slate-900/30 border border-slate-800/60 rounded-xl p-8 text-center text-slate-400 space-y-2">
                         <i data-lucide="inbox" class="w-8 h-8 mx-auto text-slate-600"></i>
-                        <p class="text-sm font-medium text-slate-300">No se encontraron artículos con los filtros seleccionados.</p>
+                        <p class="text-sm font-medium text-slate-300">No se encontraron publicaciones con los filtros seleccionados.</p>
                         <p class="text-xs text-slate-500">${data.message || 'Asegúrate de haber ejecutado el job batch de curación en Spark.'}</p>
                     </div>
                     `;
@@ -245,7 +277,10 @@
             }
         }
 
-        async function fetchAllData() {
+        async function fetchAllData(includeArticles = true) {
+            if (isFetching) return;
+            isFetching = true;
+
             const refreshIcon = document.getElementById('refresh-icon');
             refreshIcon.classList.add('animate-spin');
 
@@ -293,19 +328,30 @@
                     document.getElementById('delta-records').innerText = '0 registros';
                 }
 
-                // 4. Artículos Técnicos
-                await fetchArticles();
+                // 4. Artículos (sólo si se solicita expresamente o en carga manual)
+                if (includeArticles) {
+                    await fetchArticles();
+                }
 
             } catch (err) {
                 console.error('Error fetching dashboard data:', err);
             } finally {
                 refreshIcon.classList.remove('animate-spin');
+                isFetching = false;
             }
         }
 
-        // Carga inicial y sondeo periódico cada 15 segundos
-        fetchAllData();
-        setInterval(fetchAllData, 15000);
+        // Carga inicial completa
+        fetchAllData(true);
+
+        // Auto-refresh sólo si el usuario activó la casilla (por defecto desactivado para lectura cómoda)
+        setInterval(() => {
+            const autoRefresh = document.getElementById('toggle-autorefresh');
+            if (autoRefresh && autoRefresh.checked) {
+                // Solo refresca KPIs y métricas del sistema, NO reescribe la lista de artículos para no interrumpir lectura
+                fetchAllData(false);
+            }
+        }, 30000);
     </script>
 </body>
 </html>
