@@ -11,6 +11,12 @@ dbt_project/dbt_packages/
 dbt_project/logs/
 dbt_project/target/
 
+# Spark caches & metastore
+spark-warehouse/
+metastore_db/
+derby.log
+.checkpoint/
+
 # Archivos de SO e IDE
 .DS_Store
 Thumbs.db

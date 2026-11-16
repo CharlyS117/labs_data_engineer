@@ -1,6 +1,6 @@
 # Data Engineering Labs 🚀
 
-Entorno profesional para prácticas y laboratorios de ingeniería de datos usando **Apache Airflow**, **PostgreSQL**, **LocalStack (AWS S3)** y **dbt (Data Build Tool)** sobre Docker.
+Entorno profesional para prácticas y laboratorios de ingeniería de datos usando **Apache Airflow**, **PostgreSQL**, **LocalStack (AWS S3)**, **dbt (Data Build Tool)**, **Apache Spark (PySpark + Delta Lake)** y **Apache Kafka (Streaming)** sobre Docker.
 
 ---
 
@@ -9,20 +9,30 @@ Entorno profesional para prácticas y laboratorios de ingeniería de datos usand
 | Servicio | Contenedor | Puerto Host | Descripción | Variables Configurables |
 | :--- | :--- | :--- | :--- | :--- |
 | **Apache Airflow** | `airflow_webserver` | `8888` | Orquestador Web & Scheduler | `${AIRFLOW_WEBSERVER_HOST_PORT}`, `${AIRFLOW_ADMIN_USER}` |
-| **LocalStack (S3)** | `localstack_s3` | `4566` | Emulador oficial de AWS S3 | `${LOCALSTACK_HOST_PORT}`, `${AWS_ACCESS_KEY_ID}` |
 | **PostgreSQL** | `airflow_postgres` | `5433` | Metastore de Airflow y Data Warehouse | `${POSTGRES_HOST_PORT}`, `${POSTGRES_USER}`, `${POSTGRES_DB}` |
+| **LocalStack (S3)** | `localstack_s3` | `4566` | Emulador oficial de AWS S3 | `${LOCALSTACK_HOST_PORT}`, `${AWS_ACCESS_KEY_ID}` |
+| **Spark Master** | `spark_master` | `7077`, `8081` | Clúster Master y Spark Web UI | `${SPARK_MASTER_PORT}`, `${SPARK_UI_PORT}` |
+| **Spark Worker** | `spark_worker` | Interno | Worker del clúster Spark | `${SPARK_WORKER_MEMORY}`, `${SPARK_WORKER_CORES}` |
+| **Apache Kafka** | `kafka_broker` | `9092`, `29092` | Broker en modo KRaft (sin Zookeeper) | `${KAFKA_BROKER_PORT}`, `${KAFKA_HOST_PORT}` |
+| **Kafka UI** | `kafka_ui` | `8082` | Consola Web para inspeccionar tópicos | `${KAFKA_UI_HOST_PORT}` |
 
 ---
 
-## ⚙️ Parametrización y Variables de Entorno
+## 🌐 URLs y Consolas Web de Acceso
 
-El proyecto está 100% desacoplado de credenciales hardcodeadas siguiendo el estándar **12-Factor App**:
+- **Airflow Web UI:** [http://localhost:8888](http://localhost:8888) (`admin` / `admin`).
+- **Spark Master UI:** [http://localhost:8081](http://localhost:8081) (supervisión de jobs y workers).
+- **Kafka Web UI:** [http://localhost:8082](http://localhost:8082) (explorador visual de tópicos y mensajes).
+- **PostgreSQL (DBeaver):** `localhost:5433` (`airflow` / `airflow` en BD `airflow`).
+- **LocalStack S3:** `http://localhost:4566` (navegable con Cyberduck / MobaXterm).
 
-1. Copia la plantilla de configuración:
-   ```bash
-   cp .env.example .env
-   ```
-2. Modifica los parámetros en `.env` según tus necesidades (puertos, usuarios, contraseñas, bucket names).
+---
+
+## ⚙️ Conexiones Automatizadas en Airflow
+
+Al levantar el contenedor, Airflow auto-configura las siguientes conexiones:
+1. **`aws_default`**: Apuntando a LocalStack (`http://localstack:4566`, key: `test`, secret: `test`).
+2. **`spark_default`**: Tipo Spark (`spark://spark-master:7077`) para operadores como `SparkSubmitOperator`.
 
 ---
 
@@ -33,14 +43,21 @@ labs_data_engineer/
 ├── dags/
 │   ├── dag_mobility_elt.py        # Pipeline ELT producción: GBFS Ecobici -> LocalStack S3 -> Postgres -> dbt
 │   ├── elt_ecommerce_pipeline.py  # Pipeline ELT E-commerce con sensor S3
+│   ├── dag_spark_orchestration.py # Orquestación Spark con SparkSubmitOperator y Delta Lake
 │   ├── s3_to_postgres_dag.py      # Pipeline S3 a PostgreSQL con upsert
 │   └── test_s3_dag.py             # DAG base de verificación S3
+├── spark_jobs/
+│   └── test_spark_s3_delta.py     # Script PySpark con soporte Delta Lake y S3A
+├── streaming/
+│   ├── producer_test.py           # Productor de eventos transaccionales con Confluent Kafka
+│   └── consumer_test.py           # Consumidor de eventos transaccionales
 ├── dbt_project/                   # Proyecto dbt con profiles.yml parametrizado
 │   ├── models/
 │   │   ├── staging/               # Limpieza, tipado y validaciones (stg_station_status, stg_orders)
 │   │   └── marts/                 # Modelos analíticos finales (fct_station_kpis, fct_customer_orders)
 │   └── dbt_project.yml
-├── docker-compose.yaml            # Stack Docker totalmente parametrizado vía .env
+├── Dockerfile.airflow             # Imagen customizada de Airflow con OpenJDK 17, dbt, Spark y Kafka
+├── docker-compose.yaml            # Stack Docker ampliado y parametrizado vía .env
 ├── .env.example                   # Plantilla de variables para producción/desarrollo
 └── README.md                      # Documentación del proyecto
 ```
@@ -49,32 +66,30 @@ labs_data_engineer/
 
 ## ⚡ Guía de Inicio Rápido
 
-### 1. Levantar el entorno
+### 1. Construir y Levantar el Entorno Completo
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-### 2. Acceso a las Interfaces
-- **Apache Airflow:** [http://localhost:8888](http://localhost:8888) (`admin` / `admin` o según tu `.env`).
-- **PostgreSQL (DBeaver / DataGrip):**
-  - **Host:** `localhost` | **Puerto:** `5433`
-  - **Usuario:** `airflow` | **Contraseña:** `airflow` | **BD:** `airflow`
-- **S3 (LocalStack):** `http://localhost:4566` (navegable con Cyberduck o MobaXterm).
+### 2. Probar Kafka Streaming (Productor y Consumidor)
+Puedes probar el flujo de eventos en tiempo real desde el contenedor de Airflow o desde tu máquina:
 
----
+```bash
+# Enviar 5 eventos simulados
+docker exec airflow_webserver python3 /opt/airflow/streaming/producer_test.py
 
-## 📊 Pipelines Implementados
+# Consumir los 5 eventos
+docker exec airflow_webserver python3 /opt/airflow/streaming/consumer_test.py
+```
+*(También puedes entrar a [http://localhost:8082](http://localhost:8082) y ver el tópico `eventos_transacciones` con sus mensajes).*
 
-### 1. Movilidad Urbana ELT (`pipeline_movilidad_urbana_elt`)
-- **Extracción:** Consulta en tiempo real a la API de Ecobici GBFS de CDMX.
-- **Data Lake (S3):** Guarda snapshots crudos en `s3://${S3_BUCKET_NAME}/mobility/ecobici/status/fecha=YYYY-MM-DD/run_*.json`.
-- **Ingesta:** Carga eficiente en `public.raw_station_status`.
-- **Transformación dbt:** 
-  - `stg_station_status`: Limpieza de tipos, cálculo de `occupancy_rate` protegido ante divisiones por cero.
-  - `fct_station_kpis`: Clasificación operativa en tiempo real (`HEALTHY_STOCK`, `CRITICAL_LOW_STOCK`, `OUT_OF_SERVICE`, `CRITICAL_HIGH_CONGESTION`).
-- **Tests de Calidad:** Pruebas automatizadas de no nulos y unicidad.
+### 3. Probar Procesamiento Distribuido (Spark + Delta Lake en S3)
+Ejecuta el job directamente en el clúster Spark:
 
-### 2. E-Commerce Pipeline (`elt_ecommerce_pipeline`)
-- Espera eventos con `S3KeySensor`.
-- Carga `orders` y `customers`.
-- Compila `fct_customer_orders` con total gastado y métricas de clientes.
+```bash
+docker exec spark_master /opt/spark/bin/spark-submit \
+  --master spark://spark-master:7077 \
+  --packages org.apache.hadoop:hadoop-aws:3.3.4,io.delta:delta-spark_2.12:3.1.0 \
+  /opt/spark/jobs/test_spark_s3_delta.py
+```
+O activa el DAG **`dag_spark_orchestration`** desde la interfaz web de Airflow en [http://localhost:8888](http://localhost:8888).

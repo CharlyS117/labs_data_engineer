@@ -45,3 +45,4 @@ with DAG(
         task_id="crear_bucket_y_datos",
         python_callable=setup_s3_bucket,
     )
+
