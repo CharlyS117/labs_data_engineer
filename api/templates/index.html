@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lakehouse & Streaming Observability Dashboard</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        details summary::-webkit-details-marker {
+            display:none;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+    <!-- Top Navigation -->
+    <header class="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+            <div class="p-2 bg-indigo-600/20 text-indigo-400 rounded-lg border border-indigo-500/30">
+                <i data-lucide="layers" class="w-6 h-6"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                    Reddit Data Lakehouse & Engineering Hub
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">LIVE</span>
+                </h1>
+                <p class="text-xs text-slate-400">Kafka • PySpark Structured Streaming • Delta Lake • PostgreSQL DW • FastAPI</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-4">
+            <button onclick="fetchAllData()" class="flex items-center gap-2 px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 border border-slate-700 transition">
+                <i data-lucide="refresh-cw" id="refresh-icon" class="w-3.5 h-3.5"></i>
+                Actualizar Todo
+            </button>
+            <a href="/docs" target="_blank" class="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 font-medium">
+                <span>Swagger API</span>
+                <i data-lucide="external-link" class="w-3 h-3"></i>
+            </a>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto p-6 space-y-8">
+        <!-- System Health Badges -->
+        <section class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 flex items-center justify-between">
+                <div>
+                    <span class="text-xs text-slate-400 font-medium uppercase tracking-wider">PostgreSQL</span>
+                    <h3 id="status-postgres" class="text-sm font-semibold mt-1 text-slate-300">Conectando...</h3>
+                </div>
+                <div id="badge-postgres" class="w-3 h-3 rounded-full bg-slate-600 animate-pulse"></div>
+            </div>
+
+            <div class="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 flex items-center justify-between">
+                <div>
+                    <span class="text-xs text-slate-400 font-medium uppercase tracking-wider">LocalStack S3</span>
+                    <h3 id="status-s3" class="text-sm font-semibold mt-1 text-slate-300">Conectando...</h3>
+                </div>
+                <div id="badge-s3" class="w-3 h-3 rounded-full bg-slate-600 animate-pulse"></div>
+            </div>
+
+            <div class="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 flex items-center justify-between">
+                <div>
+                    <span class="text-xs text-slate-400 font-medium uppercase tracking-wider">Delta Lake (S3)</span>
+                    <h3 id="delta-records" class="text-sm font-semibold mt-1 text-slate-300">--</h3>
+                </div>
+                <div class="p-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                    <i data-lucide="database" class="w-4 h-4"></i>
+                </div>
+            </div>
+
+            <div class="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 flex items-center justify-between">
+                <div>
+                    <span class="text-xs text-slate-400 font-medium uppercase tracking-wider">Artículos Curados</span>
+                    <h3 id="articles-count" class="text-sm font-semibold mt-1 text-slate-300">--</h3>
+                </div>
+                <div class="p-2 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                    <i data-lucide="file-text" class="w-4 h-4"></i>
+                </div>
+            </div>
+        </section>
+
+        <!-- KPI Aggregations Table -->
+        <section class="bg-slate-900/50 border border-slate-800/80 rounded-xl overflow-hidden shadow-sm">
+            <div class="px-6 py-4 border-b border-slate-800/80 flex items-center justify-between bg-slate-900/30">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="bar-chart-3" class="w-4 h-4 text-indigo-400"></i>
+                    <h2 class="text-sm font-bold text-slate-200">Consolidado de KPIs por Subreddit (PostgreSQL DW)</h2>
+                </div>
+                <span class="text-xs text-slate-500 font-mono">public.reddit_subreddit_kpis</span>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                    <thead class="bg-slate-950/60 text-slate-400 uppercase tracking-wider font-semibold border-b border-slate-800">
+                        <tr>
+                            <th class="px-6 py-3">Subreddit</th>
+                            <th class="px-6 py-3">Fecha Ingesta</th>
+                            <th class="px-6 py-3">Posts Únicos</th>
+                            <th class="px-6 py-3">Score Promedio</th>
+                            <th class="px-6 py-3">Total Comentarios</th>
+                            <th class="px-6 py-3">Upvote Ratio</th>
+                            <th class="px-6 py-3">Longitud Título</th>
+                        </tr>
+                    </thead>
+                    <tbody id="kpi-tbody" class="divide-y divide-slate-800/60 text-slate-300">
+                        <tr>
+                            <td colspan="7" class="px-6 py-8 text-center text-slate-500">Cargando métricas...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- SECTION: Artículos y Publicaciones Técnicas Curadas -->
+        <section class="space-y-4">
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-slate-900/50 border border-slate-800/80 rounded-xl p-4">
+                <div class="flex items-center gap-3">
+                    <div class="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg border border-indigo-500/20">
+                        <i data-lucide="book-open" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <h2 class="text-base font-bold text-slate-100">Publicaciones y Artículos Técnicos Curados</h2>
+                        <p class="text-xs text-slate-400">Filtrados y procesados por PySpark (longitud >= 200 caracteres, flairs de tutorial, arquitectura o análisis)</p>
+                    </div>
+                </div>
+
+                <!-- Filtros y Búsqueda -->
+                <div class="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+                    <div class="relative flex-1 sm:w-64">
+                        <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-2.5"></i>
+                        <input type="text" id="filter-search" placeholder="Buscar palabras clave..." onkeyup="handleFilterKey(event)" class="w-full bg-slate-950/80 border border-slate-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500">
+                    </div>
+                    <select id="filter-subreddit" onchange="fetchArticles()" class="bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                        <option value="">Todos los subreddits</option>
+                        <option value="dataengineering">r/dataengineering</option>
+                        <option value="apachespark">r/apachespark</option>
+                        <option value="python">r/python</option>
+                        <option value="datascience">r/datascience</option>
+                        <option value="database">r/database</option>
+                    </select>
+                    <button onclick="fetchArticles()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold rounded-lg text-white transition flex items-center gap-1.5">
+                        <i data-lucide="filter" class="w-3.5 h-3.5"></i>
+                        Filtrar
+                    </button>
+                </div>
+            </div>
+
+            <!-- Contenedor de Tarjetas de Artículos -->
+            <div id="articles-container" class="space-y-4">
+                <div class="bg-slate-900/30 border border-slate-800/60 rounded-xl p-8 text-center text-slate-500 text-sm">
+                    Cargando artículos curados...
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="border-t border-slate-800 py-6 text-center text-xs text-slate-500">
+        Labs Data Engineer • Pipeline de Streaming & Lakehouse • Reddit -> Kafka -> Spark -> Delta Lake -> PostgreSQL
+    </footer>
+
+    <script>
+        lucide.createIcons();
+
+        function handleFilterKey(e) {
+            if (e.key === 'Enter') {
+                fetchArticles();
+            }
+        }
+
+        async function fetchArticles() {
+            const sub = document.getElementById('filter-subreddit').value;
+            const search = document.getElementById('filter-search').value;
+            const container = document.getElementById('articles-container');
+
+            let url = '/api/articles?limit=50';
+            if (sub) url += `&subreddit=${encodeURIComponent(sub)}`;
+            if (search) url += `&search=${encodeURIComponent(search)}`;
+
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                document.getElementById('articles-count').innerText = `${data.count || 0} artículos`;
+
+                if (data.status === 'success' && data.data && data.data.length > 0) {
+                    container.innerHTML = data.data.map(item => {
+                        const dateFormatted = item.event_timestamp ? item.event_timestamp.substring(0, 19).replace('T', ' ') : 'Reciente';
+                        const flairBadge = item.link_flair_text ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">${item.link_flair_text}</span>` : '';
+                        
+                        return `
+                        <div class="bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 hover:border-slate-700/80 transition shadow-sm space-y-3">
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                                <div class="flex items-center gap-2">
+                                    <span class="px-2.5 py-0.5 rounded text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">r/${item.subreddit}</span>
+                                    ${flairBadge}
+                                    <span class="text-xs text-slate-400">por <strong class="text-slate-300">u/${item.author}</strong></span>
+                                </div>
+                                <div class="flex items-center gap-3 text-xs text-slate-400 font-mono">
+                                    <span>⭐ ${item.score}</span>
+                                    <span>💬 ${item.num_comments} com.</span>
+                                    <span>📅 ${dateFormatted}</span>
+                                    <a href="${item.url}" target="_blank" class="text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-sans">
+                                        <span>Reddit</span>
+                                        <i data-lucide="external-link" class="w-3 h-3"></i>
+                                    </a>
+                                </div>
+                            </div>
+
+                            <h3 class="text-base font-bold text-white tracking-tight">${item.title}</h3>
+
+                            <details class="group bg-slate-950/60 border border-slate-800/60 rounded-lg p-3 cursor-pointer">
+                                <summary class="flex items-center justify-between text-xs font-semibold text-indigo-400 hover:text-indigo-300 select-none">
+                                    <span class="flex items-center gap-1.5">
+                                        <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+                                        <span class="group-open:hidden">Leer artículo completo (${(item.selftext || '').length} caracteres)...</span>
+                                        <span class="hidden group-open:inline">Ocultar artículo</span>
+                                    </span>
+                                    <i data-lucide="chevron-down" class="w-4 h-4 transition-transform group-open:rotate-180"></i>
+                                </summary>
+                                <div class="mt-3 pt-3 border-t border-slate-800/60 text-xs sm:text-sm text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">${item.selftext || 'Sin contenido'}</div>
+                            </details>
+                        </div>
+                        `;
+                    }).join('');
+                    lucide.createIcons();
+                } else {
+                    container.innerHTML = `
+                    <div class="bg-slate-900/30 border border-slate-800/60 rounded-xl p-8 text-center text-slate-400 space-y-2">
+                        <i data-lucide="inbox" class="w-8 h-8 mx-auto text-slate-600"></i>
+                        <p class="text-sm font-medium text-slate-300">No se encontraron artículos con los filtros seleccionados.</p>
+                        <p class="text-xs text-slate-500">${data.message || 'Asegúrate de haber ejecutado el job batch de curación en Spark.'}</p>
+                    </div>
+                    `;
+                    lucide.createIcons();
+                }
+            } catch (err) {
+                console.error("Error al obtener artículos:", err);
+            }
+        }
+
+        async function fetchAllData() {
+            const refreshIcon = document.getElementById('refresh-icon');
+            refreshIcon.classList.add('animate-spin');
+
+            try {
+                // 1. Health
+                const healthRes = await fetch('/health');
+                const health = await healthRes.json();
+                
+                const pgStatus = health.services?.postgres || 'offline';
+                const s3Status = health.services?.s3 || 'offline';
+                
+                document.getElementById('status-postgres').innerText = pgStatus.toUpperCase();
+                document.getElementById('badge-postgres').className = pgStatus === 'online' ? 'w-3 h-3 rounded-full bg-emerald-500 shadow-lg shadow-emerald-500/50' : 'w-3 h-3 rounded-full bg-rose-500';
+                
+                document.getElementById('status-s3').innerText = s3Status.toUpperCase();
+                document.getElementById('badge-s3').className = s3Status === 'online' ? 'w-3 h-3 rounded-full bg-emerald-500 shadow-lg shadow-emerald-500/50' : 'w-3 h-3 rounded-full bg-rose-500';
+
+                // 2. Postgres KPIs
+                const kpiRes = await fetch('/metrics/summary');
+                const kpis = await kpiRes.json();
+                const kpiBody = document.getElementById('kpi-tbody');
+                
+                if (kpis.status === 'success' && kpis.data.length > 0) {
+                    kpiBody.innerHTML = kpis.data.map(row => `
+                        <tr class="hover:bg-slate-800/40 transition">
+                            <td class="px-6 py-3 font-semibold text-indigo-400">r/${row.subreddit}</td>
+                            <td class="px-6 py-3 font-mono text-slate-400">${row.ingestion_date}</td>
+                            <td class="px-6 py-3 font-mono font-medium">${row.total_unique_posts}</td>
+                            <td class="px-6 py-3 font-mono">${row.avg_score}</td>
+                            <td class="px-6 py-3 font-mono">${row.total_comments}</td>
+                            <td class="px-6 py-3 font-mono">${row.avg_upvote_ratio}</td>
+                            <td class="px-6 py-3 font-mono">${row.avg_title_length} car.</td>
+                        </tr>
+                    `).join('');
+                } else {
+                    kpiBody.innerHTML = `<tr><td colspan="7" class="px-6 py-8 text-center text-slate-500 font-mono">${kpis.message || 'Sin datos de KPIs aún.'}</td></tr>`;
+                }
+
+                // 3. Delta Lake Stats
+                const deltaRes = await fetch('/metrics/delta?limit=5');
+                const delta = await deltaRes.json();
+                if (delta.status === 'success') {
+                    document.getElementById('delta-records').innerText = `${delta.total_records} registros`;
+                } else {
+                    document.getElementById('delta-records').innerText = '0 registros';
+                }
+
+                // 4. Artículos Técnicos
+                await fetchArticles();
+
+            } catch (err) {
+                console.error('Error fetching dashboard data:', err);
+            } finally {
+                refreshIcon.classList.remove('animate-spin');
+            }
+        }
+
+        // Carga inicial y sondeo periódico cada 15 segundos
+        fetchAllData();
+        setInterval(fetchAllData, 15000);
+    </script>
+</body>
+</html>

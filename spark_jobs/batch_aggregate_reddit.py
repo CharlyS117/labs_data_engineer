@@ -1,7 +1,10 @@
 import os
 from pyspark.sql import SparkSession
 from pyspark.sql.window import Window
-from pyspark.sql.functions import col, row_number, count, avg, sum, round as spark_round
+from pyspark.sql.functions import (
+    col, row_number, count, avg, sum, round as spark_round,
+    lower, coalesce, length, trim, lit
+)
 from delta.tables import DeltaTable
 
 def main():
@@ -17,10 +20,10 @@ def main():
 
     delta_path = "s3a://raw-data/delta/reddit_posts/"
 
-    print("Iniciando PySpark Batch Aggregation (Delta Lake -> Postgres)...")
+    print("Iniciando PySpark Batch Curation & Aggregation (Delta Lake -> Postgres)...")
     spark = (
         SparkSession.builder
-        .appName("RedditDeltaBatchAggregation")
+        .appName("RedditDeltaBatchCurationAndAggregation")
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
         # S3A Config
@@ -37,6 +40,11 @@ def main():
     print(f"Leyendo tabla Delta en: {delta_path}")
     raw_delta_df = spark.read.format("delta").load(delta_path)
 
+    if "link_flair_text" not in raw_delta_df.columns:
+        raw_delta_df = raw_delta_df.withColumn("link_flair_text", lit(""))
+    if "is_self" not in raw_delta_df.columns:
+        raw_delta_df = raw_delta_df.withColumn("is_self", lit(True))
+
     # 1. Deduplicar por 'id' conservando la versión más reciente según 'ingested_at'
     window_spec = Window.partitionBy("id").orderBy(col("ingested_at").desc())
     dedup_df = (
@@ -46,7 +54,7 @@ def main():
         .drop("row_num")
     )
 
-    # 2. Calcular agregaciones por subreddit e ingestion_date
+    # 2. Calcular agregaciones de KPIs por subreddit e ingestion_date
     print("Calculando KPIs por subreddit e ingestion_date...")
     kpi_df = (
         dedup_df
@@ -63,7 +71,59 @@ def main():
     print("Resumen de KPIs generados:")
     kpi_df.show(truncate=False)
 
-    # 3. Escribir resultado en PostgreSQL mediante JDBC
+    # 3. Filtrar y Curar Publicaciones y Artículos Extensos (public.reddit_articles)
+    print("Filtrando y curando publicaciones de texto completo...")
+    flair_clean = lower(coalesce(col("link_flair_text"), lit("")))
+    selftext_clean = trim(coalesce(col("selftext"), lit("")))
+    selftext_len = length(selftext_clean)
+
+    # Regla 1: Contenido con cuerpo sustancial (>= 200 caracteres)
+    rule_has_body = (col("selftext").isNotNull()) & (selftext_len >= 200)
+
+    # Regla 2: Excluir publicaciones de spam o enlaces breves
+    rule_not_spam = (
+        ~flair_clean.contains("spam") &
+        ~flair_clean.contains("promo") &
+        ~flair_clean.contains("telegram") &
+        ~flair_clean.contains("discord")
+    )
+
+    # Regla 3: Artículos técnicos, discusiones, tutoriales o publicaciones de texto explicativo
+    rule_is_article = (
+        flair_clean.contains("article") |
+        flair_clean.contains("tutorial") |
+        flair_clean.contains("architecture") |
+        flair_clean.contains("discussion") |
+        flair_clean.contains("optimization") |
+        flair_clean.contains("best practices") |
+        (
+            (col("is_self") == True) &
+            (selftext_len >= 300)
+        )
+    )
+
+    articles_df = (
+        dedup_df
+        .filter(rule_has_body & rule_not_spam & rule_is_article)
+        .select(
+            "id",
+            "subreddit",
+            "link_flair_text",
+            "title",
+            "selftext",
+            "author",
+            "score",
+            "num_comments",
+            "url",
+            "event_timestamp",
+            "ingestion_date"
+        )
+    )
+
+    total_articles = articles_df.count()
+    print(f"Total de artículos técnicos curados y seleccionados: {total_articles}")
+
+    # 4. Escribir resultados en PostgreSQL mediante JDBC
     jdbc_url = f"jdbc:postgresql://{pg_host}:{pg_port}/{pg_db}"
     db_properties = {
         "user": pg_user,
@@ -71,16 +131,16 @@ def main():
         "driver": "org.postgresql.Driver"
     }
 
-    target_table = "public.reddit_subreddit_kpis"
-    print(f"Guardando resultados consolidados en PostgreSQL: {jdbc_url} ({target_table})")
-    (
-        kpi_df.write
-        .mode("overwrite")
-        .jdbc(url=jdbc_url, table=target_table, properties=db_properties)
-    )
+    # Guardar KPIs
+    print(f"Guardando KPIs en PostgreSQL ({jdbc_url} -> public.reddit_subreddit_kpis)...")
+    kpi_df.write.mode("overwrite").jdbc(url=jdbc_url, table="public.reddit_subreddit_kpis", properties=db_properties)
+
+    # Guardar Artículos
+    print(f"Guardando artículos curados en PostgreSQL ({jdbc_url} -> public.reddit_articles)...")
+    articles_df.write.mode("overwrite").jdbc(url=jdbc_url, table="public.reddit_articles", properties=db_properties)
     print("Guardado en PostgreSQL completado.")
 
-    # 4. Limpieza (Vacuum) de versiones antiguas en Delta Lake (168 horas = 7 días de retención)
+    # 5. Limpieza (Vacuum)
     try:
         print("Ejecutando vacuum en Delta Lake...")
         spark.conf.set("spark.databricks.delta.vacuum.parallelDelete.enabled", "true")
@@ -88,11 +148,10 @@ def main():
         delta_table.vacuum(168)
         print("Vacuum finalizado con éxito.")
     except Exception as e:
-        print(f"Aviso durante el vacuum (normal en tablas recién creadas): {e}")
+        print(f"Aviso durante el vacuum: {e}")
 
     spark.stop()
     print("Job batch finalizado exitosamente.")
 
 if __name__ == "__main__":
     main()
-

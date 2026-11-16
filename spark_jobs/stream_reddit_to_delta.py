@@ -1,7 +1,7 @@
 import os
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json, to_timestamp, to_date, length
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType, BooleanType
 
 def main():
     s3_endpoint = os.getenv("AWS_ENDPOINT_URL", "http://localstack:4566")
@@ -30,15 +30,19 @@ def main():
     )
     spark.sparkContext.setLogLevel("WARN")
 
-    # Esquema JSON explícito del evento Reddit
+    # Esquema JSON explícito del evento Reddit con link_flair_text, is_self, selftext completo
     reddit_schema = StructType([
         StructField("id", StringType(), False),
         StructField("subreddit", StringType(), False),
+        StructField("link_flair_text", StringType(), True),
+        StructField("is_self", BooleanType(), True),
         StructField("title", StringType(), True),
+        StructField("selftext", StringType(), True),
         StructField("author", StringType(), True),
         StructField("score", LongType(), True),
         StructField("num_comments", LongType(), True),
         StructField("upvote_ratio", DoubleType(), True),
+        StructField("over_18", BooleanType(), True),
         StructField("created_utc", DoubleType(), True),
         StructField("url", StringType(), True),
         StructField("ingested_at", StringType(), True),
@@ -73,6 +77,7 @@ def main():
         .outputMode("append")
         .partitionBy("ingestion_date")
         .option("checkpointLocation", checkpoint_path)
+        .option("mergeSchema", "true")
         .trigger(processingTime="15 seconds")
         .start(delta_target_path)
     )
@@ -81,4 +86,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
