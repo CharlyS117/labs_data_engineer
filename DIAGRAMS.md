@@ -234,22 +234,22 @@ flowchart TD
     end
 
     %% Relaciones y Flujos de Datos
-    PROD -->|1. Produce Eventos JSON| KAFKA
-    KAFKA -->|2. Ingesta Streaming Real-Time| SPARK_STREAM
-    SPARK_STREAM -->|3. Escritura Micro-lotes S3A| DELTA
-    SPARK_STREAM -.->|Estado del Stream| CHECKPOINT
+    PROD -->|"1. Produce Eventos JSON"| KAFKA
+    KAFKA -->|"2. Ingesta Streaming Real-Time"| SPARK_STREAM
+    SPARK_STREAM -->|"3. Escritura Micro-lotes S3A"| DELTA
+    SPARK_STREAM -.->|"Estado del Stream"| CHECKPOINT
 
-    DAG_SPARK -.->|4. Dispara Job Batch Periódico| SPARK_BATCH
-    DELTA -->|5. Lectura Distribuida Delta Lake| SPARK_BATCH
-    SPARK_BATCH -->|6. Carga JDBC (Overwrite)| PG_KPIS
-    SPARK_BATCH -->|6. Carga JDBC Deduplicada| PG_ARTICLES
+    DAG_SPARK -.->|"4. Dispara Job Batch Periódico"| SPARK_BATCH
+    DELTA -->|"5. Lectura Distribuida Delta Lake"| SPARK_BATCH
+    SPARK_BATCH -->|"6. Carga JDBC Overwrite"| PG_KPIS
+    SPARK_BATCH -->|"6. Carga JDBC Deduplicada"| PG_ARTICLES
 
-    AIRFLOW -.->|7. Dispara dbt run & dbt test| DBT
-    DBT -->|8. Modelado SQL sobre DW| Warehouse
+    AIRFLOW -.->|"7. Dispara dbt run & dbt test"| DBT
+    DBT -->|"8. Modelado SQL sobre DW"| Warehouse
 
-    PG_KPIS -->|9. Consulta SQL KPIs| API
-    PG_ARTICLES -->|9. Consulta SQL Artículos| API
-    DELTA -->|10. Inspección directa PyArrow / deltalake| API
+    PG_KPIS -->|"9. Consulta SQL KPIs"| API
+    PG_ARTICLES -->|"9. Consulta SQL Artículos"| API
+    DELTA -->|"10. Inspección directa PyArrow / deltalake"| API
 ```
 
 ---
